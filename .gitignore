@@ -1,0 +1,3 @@
+docker/data
+docker/logs
+scripts/__pycache__/
