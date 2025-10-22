@@ -1,33 +1,123 @@
 from neo4j import GraphDatabase
+import time
 
-# Connect to shard1 (we'll create composite here)
-driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password123"))
+class CompositeSetup:
+    def __init__(self, uri="bolt://localhost:7687", auth=("neo4j", "password123")):
+        self.driver = GraphDatabase.driver(uri, auth=auth)
+    
+    def create_composite(self):
+        """Create composite database from local databases (idempotent)"""
+        print("Setting up composite database...")
+        with self.driver.session(database="system") as session:
+            # Step 1: Drop existing aliases (required before dropping composite)
+            aliases_to_drop = ['mycomposite.shard1', 'mycomposite.shard2', 'mycomposite.shard3']
+            for alias in aliases_to_drop:
+                try:
+                    session.run(f"DROP ALIAS {alias} FOR DATABASE")
+                    print(f"Dropped alias: {alias}")
+                except Exception as e:
+                    print(f"Note: {e}")
+                time.sleep(0.5)  # Brief pause for propagation
+            
+            # Step 2: Now drop the composite (safe after aliases)
+            try:
+                session.run("DROP COMPOSITE DATABASE mycomposite FOR DATABASE")
+                session.run("DROP DATABASE mycomposite")
+                print("Dropped existing composite: mycomposite")
+                time.sleep(2)
+            except Exception as e:
+                print(f"Note: {e}")
+            
+            # Step 3: Create composite database
+            
+            session.run("CREATE COMPOSITE DATABASE mycomposite")
+            print("Created composite database: mycomposite")
+            time.sleep(2)
+            
+            # Step 4: Create/replace local aliases (idempotent)
+            session.run("CREATE OR REPLACE ALIAS mycomposite.shard1 FOR DATABASE shard1")
+            session.run("CREATE OR REPLACE ALIAS mycomposite.shard2 FOR DATABASE shard2")
+            session.run("CREATE OR REPLACE ALIAS mycomposite.shard3 FOR DATABASE shard3")
+            print("Added constituent databases:")
+            print(" - shard1 (via alias mycomposite.shard1)")
+            print(" - shard2 (via alias mycomposite.shard2)")
+            print(" - shard3 (via alias mycomposite.shard3)")
+    
+    def verify_composite(self):
+        """Verify composite database setup"""
+        with self.driver.session(database="system") as session:
+            # Show databases
+            result = session.run("SHOW DATABASES")
+            print("\n=== All Databases ===")
+            for record in result:
+                db_type = record['type'] or 'standard'  # Fallback for system DB
+                print(f" {record['name']}: {db_type} ({record['currentStatus']})")
+            
+            # Show aliases (fixed syntax: SHOW ALIAS WHERE database = 'mycomposite')
+            result = session.run("SHOW ALIASES FOR DATABASE")
+            print("\n=== Composite Constituents ===")
+            has_results = False
+            for record in result:
+                alias_name = record['name']
+                target_db = record['database'] or record['target']
+                if alias_name.startswith('mycomposite.'):
+                    print(f" {alias_name} -> {target_db}")
+                    has_results = True
+            if not has_results:
+                print("No aliases found for mycomposite (check manually with SHOW ALIAS)")
+    
+    def test_composite_query(self):
+        """Test a simple composite query"""
+        print("\n=== Testing Composite Query ===")
+        with self.driver.session(database="mycomposite") as session:
+            # Count nodes across all shards (handles empty data gracefully)
+            try:
+                result = session.run("""
+                    CALL {
+                        USE mycomposite.shard1
+                        MATCH (n:Person) RETURN count(n) as count
+                        UNION
+                        USE mycomposite.shard2
+                        MATCH (n:Person) RETURN count(n) as count
+                        UNION
+                        USE mycomposite.shard3
+                        MATCH (n:Person) RETURN count(n) as count
+                    }
+                    RETURN sum(count) as total_persons
+                """)
+                for record in result:
+                    print(f"Total persons across all shards: {record['total_persons']}")
+            except Exception as e:
+                print(f"Query error (expected if no data loaded): {e}")
+            
+            # Count proxies
+            try:
+                result = session.run("""
+                    CALL {
+                        USE mycomposite.shard1
+                        MATCH (n:PersonProxy) RETURN count(n) as count
+                        UNION
+                        USE mycomposite.shard2
+                        MATCH (n:PersonProxy) RETURN count(n) as count
+                        UNION
+                        USE mycomposite.shard3
+                        MATCH (n:PersonProxy) RETURN count(n) as count
+                    }
+                    RETURN sum(count) as total_proxies
+                """)
+                for record in result:
+                    print(f"Total proxy nodes: {record['total_proxies']}")
+            except Exception as e:
+                print(f"Proxy query error (expected if no data): {e}")
+    
+    def close(self):
+        self.driver.close()
 
-with driver.session(database="system") as session:
-    # Create aliases for other shards
-    session.run("""
-        CREATE ALIAS shard2 
-        FOR DATABASE neo4j 
-        AT 'neo4j://neo4j-shard2:7688' 
-        USER neo4j 
-        PASSWORD 'password123'
-    """)
-    
-    session.run("""
-        CREATE ALIAS shard3 
-        FOR DATABASE neo4j 
-        AT 'neo4j://neo4j-shard3:7689' 
-        USER neo4j 
-        PASSWORD 'password123'
-    """)
-    
-    # Create composite database
-    session.run("CREATE COMPOSITE DATABASE mycomposite")
-    
-    # Add constituents
-    session.run("ALTER DATABASE mycomposite ADD COMPOSITE neo4j")  # shard1
-    session.run("ALTER DATABASE mycomposite ADD COMPOSITE shard2")
-    session.run("ALTER DATABASE mycomposite ADD COMPOSITE shard3")
-
-print("Composite database 'mycomposite' created!")
-driver.close()
+# Setup composite
+setup = CompositeSetup()
+setup.create_composite()
+setup.verify_composite()
+setup.test_composite_query()
+setup.close()
+print("\n✓ Composite database setup complete!")
+print("You can now query using: USE mycomposite")

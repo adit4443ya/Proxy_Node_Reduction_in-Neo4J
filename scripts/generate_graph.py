@@ -1,7 +1,6 @@
 import networkx as nx
 import numpy as np
 import pickle
-from neo4j import GraphDatabase
 
 class MultiTenantGraphGenerator:
     def __init__(self, num_tenants=100, seed=42):
