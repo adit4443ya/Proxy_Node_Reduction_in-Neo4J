@@ -1,0 +1,20 @@
+# Core dependencies for Proxy Node Reduction in Neo4j
+
+# Graph analysis and partitioning
+networkx>=3.0
+pymetis>=2023.1
+
+# Neo4j database driver
+neo4j>=5.15.0
+
+# Scientific computing
+numpy>=1.24.0
+
+# Data serialization
+pickle-mixin>=1.0.2
+
+# Visualization (optional but recommended)
+matplotlib>=3.7.0
+
+# Additional utilities
+scipy>=1.10.0  # For advanced statistics
