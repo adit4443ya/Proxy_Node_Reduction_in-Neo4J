@@ -77,3 +77,27 @@ class ProxyAwareRefinement:
                 print("No moves made; converged")
                 break
         return self.partition
+
+
+if __name__ == "__main__":
+    with open('../data/graph.pkl', 'rb') as f:
+        graph = pickle.load(f)['graph']
+    with open('../data/metis_partition_weighted.pkl', 'rb') as f:
+        partition_data = pickle.load(f)
+        partition_assignment = partition_data['partition_assignment']
+    
+    edge_weights = {}  # Load or simulate your workload edge weights here
+    
+    refiner = ProxyAwareRefinement(graph, partition_assignment, edge_weights=edge_weights)
+    refined_partition = refiner.refine(max_iters=10)
+    
+    from partition_graph import GraphPartitioner
+    partitioner = GraphPartitioner(graph, num_partitions=3, edge_weights=edge_weights)
+    print("\n=== AFTER REFINEMENT ===")
+    refined_stats = partitioner.analyze_partition(refined_partition)
+    
+    with open('../data/refined_partition_weighted.pkl', 'wb') as f:
+        pickle.dump({
+            'partition_assignment': refined_partition,
+            'stats': refined_stats
+        }, f)

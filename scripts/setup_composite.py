@@ -9,7 +9,7 @@ class CompositeSetup:
         """Create composite database from local databases (idempotent)"""
         print("Setting up composite database...")
         with self.driver.session(database="system") as session:
-            # Step 1: Drop existing aliases (required before dropping composite)
+            # Drop existing aliases first (ignore errors)
             aliases_to_drop = ['mycomposite.shard1', 'mycomposite.shard2', 'mycomposite.shard3']
             for alias in aliases_to_drop:
                 try:
@@ -17,24 +17,30 @@ class CompositeSetup:
                     print(f"Dropped alias: {alias}")
                 except Exception as e:
                     print(f"Note: {e}")
-                time.sleep(0.5)  # Brief pause for propagation
-            
-            # Step 2: Now drop the composite (safe after aliases)
+                time.sleep(0.5)  # Short pause
+                
+            # Drop composite database without "FOR DATABASE"
             try:
-                session.run("DROP COMPOSITE DATABASE mycomposite FOR DATABASE")
+                session.run("DROP COMPOSITE DATABASE mycomposite")
                 session.run("DROP DATABASE mycomposite")
                 print("Dropped existing composite: mycomposite")
                 time.sleep(2)
             except Exception as e:
                 print(f"Note: {e}")
             
-            # Step 3: Create composite database
+            # Create composite database
+            try:
+                session.run("CREATE COMPOSITE DATABASE mycomposite")
+                print("Created composite database: mycomposite")
+                time.sleep(2)
+            except Exception as e:
+                if 'already exists' in str(e):
+                    print("Composite database mycomposite already exists, skipping creation.")
+                else:
+                    print(f"Error creating composite: {e}")
+                    raise
             
-            session.run("CREATE COMPOSITE DATABASE mycomposite")
-            print("Created composite database: mycomposite")
-            time.sleep(2)
-            
-            # Step 4: Create/replace local aliases (idempotent)
+            # Create/replace aliases (idempotent)
             session.run("CREATE OR REPLACE ALIAS mycomposite.shard1 FOR DATABASE shard1")
             session.run("CREATE OR REPLACE ALIAS mycomposite.shard2 FOR DATABASE shard2")
             session.run("CREATE OR REPLACE ALIAS mycomposite.shard3 FOR DATABASE shard3")
@@ -46,14 +52,12 @@ class CompositeSetup:
     def verify_composite(self):
         """Verify composite database setup"""
         with self.driver.session(database="system") as session:
-            # Show databases
             result = session.run("SHOW DATABASES")
             print("\n=== All Databases ===")
             for record in result:
-                db_type = record['type'] or 'standard'  # Fallback for system DB
+                db_type = record['type'] or 'standard'
                 print(f" {record['name']}: {db_type} ({record['currentStatus']})")
             
-            # Show aliases (fixed syntax: SHOW ALIAS WHERE database = 'mycomposite')
             result = session.run("SHOW ALIASES FOR DATABASE")
             print("\n=== Composite Constituents ===")
             has_results = False
@@ -70,7 +74,6 @@ class CompositeSetup:
         """Test a simple composite query"""
         print("\n=== Testing Composite Query ===")
         with self.driver.session(database="mycomposite") as session:
-            # Count nodes across all shards (handles empty data gracefully)
             try:
                 result = session.run("""
                     CALL {
@@ -89,8 +92,6 @@ class CompositeSetup:
                     print(f"Total persons across all shards: {record['total_persons']}")
             except Exception as e:
                 print(f"Query error (expected if no data loaded): {e}")
-            
-            # Count proxies
             try:
                 result = session.run("""
                     CALL {
@@ -113,11 +114,13 @@ class CompositeSetup:
     def close(self):
         self.driver.close()
 
+
 # Setup composite
-setup = CompositeSetup()
-setup.create_composite()
-setup.verify_composite()
-setup.test_composite_query()
-setup.close()
-print("\n✓ Composite database setup complete!")
-print("You can now query using: USE mycomposite")
+if __name__ == "__main__":
+    setup = CompositeSetup()
+    setup.create_composite()
+    setup.verify_composite()
+    setup.test_composite_query()
+    setup.close()
+
+    print("\n✓ Composite database setup complete!")

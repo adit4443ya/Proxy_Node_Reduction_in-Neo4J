@@ -1,7 +1,6 @@
 import networkx as nx
 import pickle
 import pymetis
-import numpy as np
 from collections import defaultdict
 
 class GraphPartitioner:
@@ -13,29 +12,32 @@ class GraphPartitioner:
     def graph_to_metis_format(self):
         node_mapping = {node: idx for idx, node in enumerate(self.graph.nodes())}
         reverse_mapping = {idx: node for node, idx in node_mapping.items()}
-        
+
         adjacency = [[] for _ in range(len(node_mapping))]
-        weights = [[] for _ in range(len(node_mapping))]
-        
         for u, v in self.graph.edges():
             u_idx = node_mapping[u]
             v_idx = node_mapping[v]
             adjacency[u_idx].append(v_idx)
             adjacency[v_idx].append(u_idx)
-            
-            w = self.edge_weights.get((u, v), self.edge_weights.get((v, u), 1))
-            weights[u_idx].append(w)
-            weights[v_idx].append(w)
-        
-        return adjacency, weights, node_mapping, reverse_mapping
+
+        # Flatten edge weights corresponding to adjacency edges
+        eweights = []
+        for u_idx in range(len(adjacency)):
+            for v_idx in adjacency[u_idx]:
+                u = reverse_mapping[u_idx]
+                v = reverse_mapping[v_idx]
+                w = self.edge_weights.get((u, v), self.edge_weights.get((v, u), 1))
+                eweights.append(int(w))  # pymetis expects int weights
+
+        return adjacency, eweights, node_mapping, reverse_mapping
     
     def partition_with_metis(self):
-        adjacency, weights, node_mapping, reverse_mapping = self.graph_to_metis_format()
+        adjacency, eweights, node_mapping, reverse_mapping = self.graph_to_metis_format()
         print(f"Running weighted METIS partitioning with k={self.num_partitions}...")
         n_cuts, membership = pymetis.part_graph(
             nparts=self.num_partitions,
             adjacency=adjacency,
-            eweights=weights
+            eweights=eweights
         )
         print(f"Weighted edge-cut: {n_cuts}")
         partition_assignment = {reverse_mapping[idx]: part for idx, part in enumerate(membership)}
@@ -46,7 +48,7 @@ class GraphPartitioner:
         for node, part in partition_assignment.items():
             stats['partition_sizes'][part] += 1
         
-        for u,v in self.graph.edges():
+        for u, v in self.graph.edges():
             part_u, part_v = partition_assignment[u], partition_assignment[v]
             if part_u != part_v:
                 stats['edge_cuts'] += 1
@@ -59,3 +61,24 @@ class GraphPartitioner:
         print(f"Edge Cuts: {stats['edge_cuts']}")
         print(f"Proxies: {total_proxies} ({100 * total_proxies/len(self.graph.nodes()):.2f}%)")
         return stats
+
+
+# Main execution for testing / running
+if __name__ == "__main__":
+    with open('../data/graph.pkl', 'rb') as f:
+        data = pickle.load(f)
+        graph = data['graph']
+
+    # TODO: load real workload edge weights here
+    edge_weights = {}
+
+    partitioner = GraphPartitioner(graph, num_partitions=3, edge_weights=edge_weights)
+    partition_assignment, edge_cuts = partitioner.partition_with_metis()
+    stats = partitioner.analyze_partition(partition_assignment)
+
+    with open('../data/metis_partition_weighted.pkl', 'wb') as f:
+        pickle.dump({
+            'partition_assignment': partition_assignment,
+            'edge_cuts': edge_cuts,
+            'stats': stats
+        }, f)
