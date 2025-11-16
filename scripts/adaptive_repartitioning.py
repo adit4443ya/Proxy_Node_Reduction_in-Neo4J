@@ -38,7 +38,7 @@ def compute_proxy_count(partition, graph):
     total_proxies = sum(len(s) for s in proxy_sets.values())
     return total_proxies
 
-def adaptive_partition_loop(graph, initial_partition, interval_sec=600, max_cycles=10, threshold=0.1):
+def adaptive_partition_loop(graph, initial_partition, interval_sec=5, max_cycles=10, threshold=0.1):
     partition = initial_partition
     old_proxy_count = None
 
@@ -63,7 +63,7 @@ def adaptive_partition_loop(graph, initial_partition, interval_sec=600, max_cycl
             
             benchmark = QueryBenchmark()
             benchmark.analyze_proxy_impact()
-            benchmark.benchmark_neighbor_queries(num_queries=100)
+            benchmark.benchmark_multi_hop_queries(num_queries=250)
 
             old_proxy_count = proxy_count
             partition = refined_partition
